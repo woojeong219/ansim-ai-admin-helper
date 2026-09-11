@@ -91,18 +91,30 @@ excel_tab, doc_tab, mentor_tab = st.tabs(
 )
 
 with excel_tab:
-    st.subheader("부서별 명단 자동 취합")
-    st.write("여러 CSV·엑셀 파일과 모든 시트를 한 표로 합치고, 오류를 점검해 정리된 엑셀을 만듭니다.")
+    st.subheader("엑셀 업무 자동화")
+    work_type = st.radio(
+        "처리할 업무를 선택하세요",
+        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합"],
+        horizontal=True,
+    )
+    descriptions = {
+        "파일·시트 합치기": "여러 파일과 엑셀의 모든 시트를 열 이름에 맞춰 하나의 표로 합칩니다.",
+        "중복·누락·오류 찾기": "중복 기준, 필수값, 숫자·날짜 형식을 선택해 오류 위치를 찾습니다.",
+        "조건별 집계표": "부서·상태·연도 등 원하는 기준별 건수와 합계·평균을 계산합니다.",
+        "지정 서식 정리": "필요한 열만 원하는 순서로 배치하고 열 이름 변경·정렬까지 처리합니다.",
+        "부서별 명단 취합": "부서별 제출 명단을 합치고 중복·누락을 점검해 최종 명단을 만듭니다.",
+    }
+    st.info(descriptions[work_type])
     uploads = st.file_uploader(
-        "부서에서 제출한 CSV 또는 XLSX 파일을 모두 선택하세요",
+        "CSV 또는 XLSX 파일을 선택하세요",
         type=["csv", "xlsx"],
         accept_multiple_files=True,
+        help="파일을 여러 개 선택할 수 있으며 XLSX 파일은 모든 시트를 읽습니다.",
     )
-    st.caption("열 이름이 같은 자료끼리 자동으로 맞춰집니다. 파일마다 열 순서가 달라도 괜찮습니다.")
+
     if uploads:
         try:
-            frames = []
-            source_summary = []
+            frames, source_summary = [], []
             for uploaded in uploads:
                 for sheet_name, source_df in read_uploaded_tables(uploaded):
                     source_df = normalize_columns(source_df)
@@ -114,101 +126,131 @@ with excel_tab:
                     )
             df = pd.concat(frames, ignore_index=True, sort=False)
             source_summary_df = pd.DataFrame(source_summary)
+            data_columns = [c for c in df.columns if c not in ["출처파일", "출처시트"]]
 
-            st.success(
-                f"파일 {len(uploads):,}개 · 표 {len(frames):,}개 · 총 {len(df):,}행을 취합했습니다."
-            )
-            with st.expander("파일별 취합 현황", expanded=True):
+            st.success(f"파일 {len(uploads):,}개 · 표 {len(frames):,}개 · 총 {len(df):,}행을 읽었습니다.")
+            with st.expander("원본 및 파일별 현황", expanded=False):
                 st.dataframe(source_summary_df, use_container_width=True, hide_index=True)
+                st.dataframe(df.head(100), use_container_width=True, hide_index=True)
 
-            data_columns = [col for col in df.columns if col not in ["출처파일", "출처시트"]]
-            st.markdown("#### 1. 점검 기준 선택")
-            c1, c2 = st.columns(2)
-            duplicate_keys = c1.multiselect(
-                "중복 판정 열",
-                data_columns,
-                help="예: 사번 또는 성명+생년월일. 선택하지 않으면 전체 열이 같은 행을 찾습니다.",
-            )
-            required_columns = c2.multiselect(
-                "필수 입력 열",
-                data_columns,
-                help="선택한 열이 비어 있는 행을 누락으로 표시합니다.",
-            )
+            output_df = df.copy()
+            sheets = {"파일별현황": source_summary_df}
+            output_name = "엑셀_자동화_결과.xlsx"
 
-            duplicate_subset = duplicate_keys or data_columns
-            duplicate_mask = df.duplicated(subset=duplicate_subset, keep=False)
-            if required_columns:
-                missing_mask = df[required_columns].isna() | df[required_columns].astype(str).apply(
-                    lambda col: col.str.strip().eq("")
+            if work_type == "파일·시트 합치기":
+                include_source = st.checkbox("출처파일·출처시트 열 포함", value=True)
+                if not include_source:
+                    output_df = output_df[data_columns]
+                sheets["통합자료"] = output_df
+                st.metric("통합된 전체 행", len(output_df))
+                st.dataframe(output_df.head(200), use_container_width=True, hide_index=True)
+                output_name = "파일_시트_통합결과.xlsx"
+
+            elif work_type == "중복·누락·오류 찾기":
+                left, right = st.columns(2)
+                duplicate_keys = left.multiselect("중복 판정 열", data_columns)
+                required_columns = right.multiselect("필수 입력 열", data_columns)
+                numeric_columns = left.multiselect("숫자 형식이어야 하는 열", data_columns)
+                date_columns = right.multiselect("날짜 형식이어야 하는 열", data_columns)
+
+                duplicate_subset = duplicate_keys or data_columns
+                duplicate_mask = df.duplicated(subset=duplicate_subset, keep=False)
+                missing_mask = pd.DataFrame(False, index=df.index, columns=data_columns)
+                if required_columns:
+                    missing_mask[required_columns] = (
+                        df[required_columns].isna()
+                        | df[required_columns].astype(str).apply(lambda col: col.str.strip().eq(""))
+                    )
+                format_issues = []
+                for col in numeric_columns:
+                    invalid = pd.to_numeric(df[col], errors="coerce").isna() & df[col].notna()
+                    for idx in df.index[invalid]:
+                        format_issues.append({"행": idx + 2, "열": col, "오류": "숫자 형식 아님", "입력값": df.at[idx, col]})
+                for col in date_columns:
+                    invalid = pd.to_datetime(df[col], errors="coerce").isna() & df[col].notna()
+                    for idx in df.index[invalid]:
+                        format_issues.append({"행": idx + 2, "열": col, "오류": "날짜 형식 아님", "입력값": df.at[idx, col]})
+                issue_df = pd.DataFrame(format_issues, columns=["행", "열", "오류", "입력값"])
+                missing_rows = df[missing_mask.any(axis=1)]
+                m1, m2, m3 = st.columns(3)
+                m1.metric("중복 의심 행", int(duplicate_mask.sum()))
+                m2.metric("필수값 누락", int(missing_mask.sum().sum()))
+                m3.metric("형식 오류", len(issue_df))
+                sheets.update({"원본": df, "중복의심": df[duplicate_mask], "필수값누락": missing_rows, "형식오류": issue_df})
+                st.dataframe(issue_df if len(issue_df) else pd.DataFrame({"결과": ["형식 오류 없음"]}), use_container_width=True, hide_index=True)
+                output_name = "중복_누락_오류_점검결과.xlsx"
+
+            elif work_type == "조건별 집계표":
+                group_columns = st.multiselect("집계 기준 열", data_columns, max_selections=3)
+                value_column = st.selectbox("계산할 숫자 열", ["건수만 계산"] + data_columns)
+                aggregation = st.selectbox("계산 방법", ["합계", "평균", "최대값", "최소값"])
+                if group_columns:
+                    if value_column == "건수만 계산":
+                        summary = df.groupby(group_columns, dropna=False).size().reset_index(name="건수")
+                    else:
+                        numeric_values = pd.to_numeric(df[value_column], errors="coerce")
+                        temp = df[group_columns].copy()
+                        temp[value_column] = numeric_values
+                        method_map = {"합계": "sum", "평균": "mean", "최대값": "max", "최소값": "min"}
+                        summary = temp.groupby(group_columns, dropna=False)[value_column].agg(method_map[aggregation]).reset_index()
+                        summary = summary.rename(columns={value_column: f"{value_column}_{aggregation}"})
+                    sheets.update({"원본": df, "조건별집계": summary})
+                    st.dataframe(summary, use_container_width=True, hide_index=True)
+                else:
+                    summary = pd.DataFrame({"안내": ["집계 기준 열을 하나 이상 선택하세요."]})
+                    sheets.update({"원본": df, "조건별집계": summary})
+                    st.warning("집계 기준 열을 선택하면 결과가 표시됩니다.")
+                output_name = "조건별_집계표.xlsx"
+
+            elif work_type == "지정 서식 정리":
+                selected_columns = st.multiselect("결과에 포함할 열과 순서", data_columns, default=data_columns)
+                rename_text = st.text_area(
+                    "열 이름 변경(선택)",
+                    placeholder="기존열=새열\n예: 담당표시=담당자",
+                    help="한 줄에 하나씩 기존 열과 새 열을 = 기호로 연결하세요.",
                 )
-                missing_rows_mask = missing_mask.any(axis=1)
-                missing_cells = int(missing_mask.sum().sum())
+                sort_column = st.selectbox("정렬 기준", ["정렬하지 않음"] + selected_columns)
+                ascending = st.radio("정렬 방향", ["오름차순", "내림차순"], horizontal=True)
+                output_df = df[selected_columns].copy() if selected_columns else pd.DataFrame()
+                rename_map = {}
+                for line in rename_text.splitlines():
+                    if "=" in line:
+                        old, new = [part.strip() for part in line.split("=", 1)]
+                        if old in output_df.columns and new:
+                            rename_map[old] = new
+                if sort_column != "정렬하지 않음" and sort_column in output_df.columns:
+                    output_df = output_df.sort_values(sort_column, ascending=ascending == "오름차순")
+                output_df = output_df.rename(columns=rename_map)
+                sheets["정리된자료"] = output_df
+                st.dataframe(output_df.head(200), use_container_width=True, hide_index=True)
+                output_name = "지정서식_정리결과.xlsx"
+
             else:
-                missing_rows_mask = pd.Series(False, index=df.index)
-                missing_cells = 0
+                left, right = st.columns(2)
+                department_col = left.selectbox("부서 열", data_columns)
+                duplicate_keys = right.multiselect("중복 판정 열", data_columns)
+                required_columns = left.multiselect("필수 입력 열", data_columns)
+                remove_duplicates = right.checkbox("중복은 첫 번째 행만 남기기", value=False)
+                duplicate_subset = duplicate_keys or data_columns
+                duplicate_mask = df.duplicated(subset=duplicate_subset, keep=False)
+                missing_mask = pd.DataFrame(False, index=df.index, columns=data_columns)
+                if required_columns:
+                    missing_mask[required_columns] = (
+                        df[required_columns].isna()
+                        | df[required_columns].astype(str).apply(lambda col: col.str.strip().eq(""))
+                    )
+                output_df = df.drop_duplicates(subset=duplicate_subset, keep="first") if remove_duplicates else df.copy()
+                department_summary = output_df.groupby(department_col, dropna=False).size().reset_index(name="인원")
+                sheets.update({"정리된명단": output_df, "부서별현황": department_summary,
+                               "중복의심": df[duplicate_mask], "필수값누락": df[missing_mask.any(axis=1)]})
+                m1, m2, m3 = st.columns(3)
+                m1.metric("전체 명단", len(output_df))
+                m2.metric("중복 의심 행", int(duplicate_mask.sum()))
+                m3.metric("필수값 누락", int(missing_mask.sum().sum()))
+                st.dataframe(department_summary, use_container_width=True, hide_index=True)
+                output_name = "부서별_명단_취합결과.xlsx"
 
-            findings = []
-            for row_idx, row in df.iterrows():
-                for col in data_columns:
-                    kind = detect_privacy(row[col])
-                    if kind:
-                        findings.append(
-                            {"취합 행": row_idx + 2, "출처파일": row["출처파일"], "출처시트": row["출처시트"],
-                             "열": str(col), "탐지 유형": kind}
-                        )
-            findings_df = pd.DataFrame(
-                findings, columns=["취합 행", "출처파일", "출처시트", "열", "탐지 유형"]
-            )
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("전체 취합 행", len(df))
-            m2.metric("중복 의심 행", int(duplicate_mask.sum()))
-            m3.metric("필수값 누락", missing_cells)
-            m4.metric("개인정보 형태", len(findings_df))
-
-            st.markdown("#### 2. 최종 명단 정리")
-            remove_duplicates = st.checkbox("중복 행은 첫 번째 자료만 남기기", value=False)
-            include_source = st.checkbox("결과 파일에 출처파일·출처시트 표시", value=True)
-            default_order = (["출처파일", "출처시트"] if include_source else []) + data_columns
-            output_columns = st.multiselect(
-                "결과에 포함할 열과 순서",
-                list(df.columns),
-                default=default_order,
-                help="선택한 순서대로 결과 엑셀의 열이 만들어집니다.",
-            )
-            cleaned_df = df.drop_duplicates(subset=duplicate_subset, keep="first") if remove_duplicates else df.copy()
-            if output_columns:
-                cleaned_df = cleaned_df[output_columns]
-
-            group_column = st.selectbox("부서별·항목별 집계 기준(선택)", ["집계하지 않음"] + data_columns)
-            if group_column == "집계하지 않음":
-                group_summary_df = pd.DataFrame(columns=["집계 기준", "건수"])
-            else:
-                group_summary_df = (
-                    cleaned_df.groupby(group_column, dropna=False).size().reset_index(name="건수")
-                    .sort_values("건수", ascending=False)
-                )
-
-            st.markdown("#### 3. 결과 미리보기")
-            st.dataframe(cleaned_df.head(200), use_container_width=True, hide_index=True)
-            if group_column != "집계하지 않음":
-                st.dataframe(group_summary_df, use_container_width=True, hide_index=True)
-
-            if len(findings_df):
-                st.warning("개인정보로 보이는 값이 있습니다. 외부 서비스에 전송하지 마세요.")
-
-            summary_df = pd.DataFrame(
-                {"점검 항목": ["업로드 파일", "취합 표", "전체 행", "중복 의심 행", "필수값 누락", "개인정보 형태"],
-                 "결과": [len(uploads), len(frames), len(df), int(duplicate_mask.sum()), missing_cells, len(findings_df)]}
-            )
-            result = to_excel_bytes(
-                {"정리된명단": cleaned_df, "점검요약": summary_df, "파일별현황": source_summary_df,
-                 "중복의심": df[duplicate_mask], "필수값누락": df[missing_rows_mask],
-                 "조건별집계": group_summary_df, "개인정보탐지": findings_df}
-            )
-            st.download_button(
-                "📥 정리된 엑셀 다운로드", result, "부서별_명단_취합결과.xlsx", type="primary"
-            )
+            st.download_button("📥 결과 엑셀 다운로드", to_excel_bytes(sheets), output_name, type="primary")
         except Exception as exc:
             st.error(f"파일을 처리하지 못했습니다: {exc}")
 
@@ -286,4 +328,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.2 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.3 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
