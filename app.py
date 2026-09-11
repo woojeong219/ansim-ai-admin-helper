@@ -63,57 +63,152 @@ def to_excel_bytes(sheets):
     return output.getvalue()
 
 
+def read_uploaded_tables(uploaded_file):
+    """Return every table in one uploaded file with source metadata."""
+    tables = []
+    if uploaded_file.name.lower().endswith(".csv"):
+        try:
+            frame = pd.read_csv(uploaded_file, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            frame = pd.read_csv(uploaded_file, encoding="cp949")
+        tables.append(("CSV", frame))
+    else:
+        workbook = pd.ExcelFile(uploaded_file)
+        for sheet_name in workbook.sheet_names:
+            tables.append((sheet_name, pd.read_excel(workbook, sheet_name=sheet_name)))
+    return tables
+
+
+def normalize_columns(frame):
+    frame = frame.copy()
+    frame.columns = [str(col).strip() for col in frame.columns]
+    return frame
+
+
 excel_tab, doc_tab, mentor_tab = st.tabs(
     ["📊 엑셀 업무 자동화", "📝 보도자료·보고서", "👩‍💼 신입공무원 멘토"]
 )
 
 with excel_tab:
-    st.subheader("엑셀 업무 자동화")
-    st.write("파일을 현재 세션에서 분석해 중복, 빈칸, 개인정보 형태를 찾아줍니다.")
-    upload = st.file_uploader("CSV 또는 XLSX 파일", type=["csv", "xlsx"])
-    if upload:
+    st.subheader("부서별 명단 자동 취합")
+    st.write("여러 CSV·엑셀 파일과 모든 시트를 한 표로 합치고, 오류를 점검해 정리된 엑셀을 만듭니다.")
+    uploads = st.file_uploader(
+        "부서에서 제출한 CSV 또는 XLSX 파일을 모두 선택하세요",
+        type=["csv", "xlsx"],
+        accept_multiple_files=True,
+    )
+    st.caption("열 이름이 같은 자료끼리 자동으로 맞춰집니다. 파일마다 열 순서가 달라도 괜찮습니다.")
+    if uploads:
         try:
-            if upload.name.lower().endswith(".csv"):
-                try:
-                    df = pd.read_csv(upload, encoding="utf-8-sig")
-                except UnicodeDecodeError:
-                    upload.seek(0)
-                    df = pd.read_csv(upload, encoding="cp949")
+            frames = []
+            source_summary = []
+            for uploaded in uploads:
+                for sheet_name, source_df in read_uploaded_tables(uploaded):
+                    source_df = normalize_columns(source_df)
+                    source_df.insert(0, "출처시트", sheet_name)
+                    source_df.insert(0, "출처파일", uploaded.name)
+                    frames.append(source_df)
+                    source_summary.append(
+                        {"출처파일": uploaded.name, "출처시트": sheet_name, "행 수": len(source_df)}
+                    )
+            df = pd.concat(frames, ignore_index=True, sort=False)
+            source_summary_df = pd.DataFrame(source_summary)
+
+            st.success(
+                f"파일 {len(uploads):,}개 · 표 {len(frames):,}개 · 총 {len(df):,}행을 취합했습니다."
+            )
+            with st.expander("파일별 취합 현황", expanded=True):
+                st.dataframe(source_summary_df, use_container_width=True, hide_index=True)
+
+            data_columns = [col for col in df.columns if col not in ["출처파일", "출처시트"]]
+            st.markdown("#### 1. 점검 기준 선택")
+            c1, c2 = st.columns(2)
+            duplicate_keys = c1.multiselect(
+                "중복 판정 열",
+                data_columns,
+                help="예: 사번 또는 성명+생년월일. 선택하지 않으면 전체 열이 같은 행을 찾습니다.",
+            )
+            required_columns = c2.multiselect(
+                "필수 입력 열",
+                data_columns,
+                help="선택한 열이 비어 있는 행을 누락으로 표시합니다.",
+            )
+
+            duplicate_subset = duplicate_keys or data_columns
+            duplicate_mask = df.duplicated(subset=duplicate_subset, keep=False)
+            if required_columns:
+                missing_mask = df[required_columns].isna() | df[required_columns].astype(str).apply(
+                    lambda col: col.str.strip().eq("")
+                )
+                missing_rows_mask = missing_mask.any(axis=1)
+                missing_cells = int(missing_mask.sum().sum())
             else:
-                df = pd.read_excel(upload)
+                missing_rows_mask = pd.Series(False, index=df.index)
+                missing_cells = 0
 
-            st.success(f"{len(df):,}행 · {len(df.columns):,}열을 불러왔습니다.")
-            st.dataframe(df.head(100), use_container_width=True)
-
-            duplicate_mask = df.duplicated(keep=False)
-            empty_count = int(df.isna().sum().sum())
             findings = []
             for row_idx, row in df.iterrows():
-                for col in df.columns:
+                for col in data_columns:
                     kind = detect_privacy(row[col])
                     if kind:
-                        findings.append({"행": row_idx + 2, "열": str(col), "탐지 유형": kind})
-            findings_df = pd.DataFrame(findings, columns=["행", "열", "탐지 유형"])
+                        findings.append(
+                            {"취합 행": row_idx + 2, "출처파일": row["출처파일"], "출처시트": row["출처시트"],
+                             "열": str(col), "탐지 유형": kind}
+                        )
+            findings_df = pd.DataFrame(
+                findings, columns=["취합 행", "출처파일", "출처시트", "열", "탐지 유형"]
+            )
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("중복 의심 행", int(duplicate_mask.sum()))
-            c2.metric("빈칸", empty_count)
-            c3.metric("개인정보 형태", len(findings_df))
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("전체 취합 행", len(df))
+            m2.metric("중복 의심 행", int(duplicate_mask.sum()))
+            m3.metric("필수값 누락", missing_cells)
+            m4.metric("개인정보 형태", len(findings_df))
+
+            st.markdown("#### 2. 최종 명단 정리")
+            remove_duplicates = st.checkbox("중복 행은 첫 번째 자료만 남기기", value=False)
+            include_source = st.checkbox("결과 파일에 출처파일·출처시트 표시", value=True)
+            default_order = (["출처파일", "출처시트"] if include_source else []) + data_columns
+            output_columns = st.multiselect(
+                "결과에 포함할 열과 순서",
+                list(df.columns),
+                default=default_order,
+                help="선택한 순서대로 결과 엑셀의 열이 만들어집니다.",
+            )
+            cleaned_df = df.drop_duplicates(subset=duplicate_subset, keep="first") if remove_duplicates else df.copy()
+            if output_columns:
+                cleaned_df = cleaned_df[output_columns]
+
+            group_column = st.selectbox("부서별·항목별 집계 기준(선택)", ["집계하지 않음"] + data_columns)
+            if group_column == "집계하지 않음":
+                group_summary_df = pd.DataFrame(columns=["집계 기준", "건수"])
+            else:
+                group_summary_df = (
+                    cleaned_df.groupby(group_column, dropna=False).size().reset_index(name="건수")
+                    .sort_values("건수", ascending=False)
+                )
+
+            st.markdown("#### 3. 결과 미리보기")
+            st.dataframe(cleaned_df.head(200), use_container_width=True, hide_index=True)
+            if group_column != "집계하지 않음":
+                st.dataframe(group_summary_df, use_container_width=True, hide_index=True)
 
             if len(findings_df):
                 st.warning("개인정보로 보이는 값이 있습니다. 외부 서비스에 전송하지 마세요.")
-                st.dataframe(findings_df, use_container_width=True)
-            else:
-                st.info("정규식 검사에서 휴대전화·주민등록번호·이메일 형태가 발견되지 않았습니다.")
 
             summary_df = pd.DataFrame(
-                {"점검 항목": ["전체 행", "전체 열", "중복 의심 행", "빈칸", "개인정보 형태"],
-                 "결과": [len(df), len(df.columns), int(duplicate_mask.sum()), empty_count, len(findings_df)]}
+                {"점검 항목": ["업로드 파일", "취합 표", "전체 행", "중복 의심 행", "필수값 누락", "개인정보 형태"],
+                 "결과": [len(uploads), len(frames), len(df), int(duplicate_mask.sum()), missing_cells, len(findings_df)]}
             )
             result = to_excel_bytes(
-                {"원본": df, "점검요약": summary_df, "중복의심": df[duplicate_mask], "개인정보탐지": findings_df}
+                {"정리된명단": cleaned_df, "점검요약": summary_df, "파일별현황": source_summary_df,
+                 "중복의심": df[duplicate_mask], "필수값누락": df[missing_rows_mask],
+                 "조건별집계": group_summary_df, "개인정보탐지": findings_df}
             )
-            st.download_button("📥 점검 결과 엑셀 다운로드", result, "엑셀_점검결과.xlsx")
+            st.download_button(
+                "📥 정리된 엑셀 다운로드", result, "부서별_명단_취합결과.xlsx", type="primary"
+            )
         except Exception as exc:
             st.error(f"파일을 처리하지 못했습니다: {exc}")
 
@@ -191,4 +286,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.1 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.2 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
