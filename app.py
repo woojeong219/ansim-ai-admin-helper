@@ -94,7 +94,7 @@ with excel_tab:
     st.subheader("엑셀 업무 자동화")
     work_type = st.radio(
         "처리할 업무를 선택하세요",
-        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합"],
+        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합", "고급 업무 매뉴얼"],
         horizontal=True,
     )
     descriptions = {
@@ -103,16 +103,137 @@ with excel_tab:
         "조건별 집계표": "부서·상태·연도 등 원하는 기준별 건수와 합계·평균을 계산합니다.",
         "지정 서식 정리": "필요한 열만 원하는 순서로 배치하고 열 이름 변경·정렬까지 처리합니다.",
         "부서별 명단 취합": "부서별 제출 명단을 합치고 중복·누락을 점검해 최종 명단을 만듭니다.",
+        "고급 업무 매뉴얼": "복잡한 업무는 AI에게 정확히 질문하고, 받은 VBA 코드를 안전하게 적용하는 방법을 안내합니다.",
     }
     st.info(descriptions[work_type])
-    uploads = st.file_uploader(
-        "CSV 또는 XLSX 파일을 선택하세요",
-        type=["csv", "xlsx"],
-        accept_multiple_files=True,
-        help="파일을 여러 개 선택할 수 있으며 XLSX 파일은 모든 시트를 읽습니다.",
-    )
 
-    if uploads:
+    if work_type == "고급 업무 매뉴얼":
+        prompt_tab, apply_tab, safety_tab = st.tabs(["① 프롬프트 만들기", "② VBA 적용하기", "③ 오류·보안 확인"])
+        with prompt_tab:
+            st.markdown("#### AI에게 VBA 코드 요청하기")
+            advanced_task = st.selectbox(
+                "하고 싶은 작업",
+                ["여러 파일 반복 처리", "조건별로 시트 분리", "반복 서식 자동 적용", "중복·빈칸 일괄 처리", "폴더 안 파일 자동 취합", "직접 입력"],
+            )
+            task_examples = {
+                "여러 파일 반복 처리": "선택한 여러 엑셀 파일의 첫 번째 시트에서 자료를 읽어 현재 통합문서의 '통합' 시트에 이어 붙인다.",
+                "조건별로 시트 분리": "'원본' 시트의 부서 열을 기준으로 부서별 시트를 새로 만들고 해당 행을 복사한다.",
+                "반복 서식 자동 적용": "사용 중인 표의 제목행, 테두리, 날짜, 숫자 표시 형식을 지정된 규칙으로 정리한다.",
+                "중복·빈칸 일괄 처리": "사번 열의 중복값과 필수 열의 빈칸을 찾아 색으로 표시하고 '오류목록' 시트에 기록한다.",
+                "폴더 안 파일 자동 취합": "사용자가 선택한 폴더의 모든 xlsx 파일과 각 파일의 지정 시트를 하나의 표로 합친다.",
+                "직접 입력": "",
+            }
+            task_detail = st.text_area("업무 설명", value=task_examples[advanced_task], height=110)
+            sheet_info = st.text_input("시트명과 주요 열", placeholder="예: 원본 시트 / A열 접수번호, B열 부서, C열 금액")
+            special_rule = st.text_area(
+                "세부 조건과 예외",
+                placeholder="예: 제목행은 1행, 빈 행 제외, 기존 시트는 삭제하지 않기, 결과는 새 시트에 만들기",
+                height=90,
+            )
+            generated_prompt = f"""당신은 Excel VBA 전문가입니다. 아래 업무를 수행하는 VBA 코드를 작성해 주세요.
+
+[업무 목적]
+{task_detail or '[수행할 업무를 구체적으로 입력]'}
+
+[통합문서 구조]
+{sheet_info or '[시트명과 각 열의 의미를 입력]'}
+
+[세부 조건 및 예외]
+{special_rule or '[제목행, 빈칸 처리, 결과 위치, 제외 조건 등을 입력]'}
+
+[필수 작성 조건]
+1. Windows용 데스크톱 Excel의 표준 모듈에서 실행 가능한 전체 코드를 제공할 것
+2. ActiveWorkbook과 ActiveSheet를 무조건 사용하지 말고 대상 통합문서와 시트를 명확히 지정할 것
+3. 원본 데이터를 삭제하거나 덮어쓰지 말고, 결과는 새 시트에 만들 것
+4. 같은 이름의 결과 시트가 있을 때의 처리 방법을 코드에 포함할 것
+5. 오류 처리와 화면 업데이트 복구 코드를 포함할 것
+6. 각 코드 구간에 한국어 주석을 달고, 사용자가 수정할 시트명·열 번호를 맨 위에 모을 것
+7. 외부 인터넷 접속, 프로그램 실행, 파일 삭제 기능은 사용하지 말 것
+8. 코드 아래에 실행 전 준비사항과 실행 방법을 초보자도 알 수 있게 설명할 것
+
+실제 개인정보 예시는 사용하지 말고 가상의 열 이름과 값으로 설명해 주세요."""
+            st.caption("아래 상자의 복사 아이콘을 눌러 기관에서 사용이 허용된 AI에 붙여 넣으세요.")
+            st.code(generated_prompt, language=None)
+            st.warning("실제 명단이나 개인정보를 붙여 넣지 말고, 시트명·열 이름·가상 예시만 설명하세요.")
+
+            with st.expander("안전한 VBA 예제: 선택 영역의 빈칸 표시"):
+                safe_vba = '''Option Explicit
+
+Sub HighlightBlankCells()
+    Dim targetRange As Range
+    Dim cell As Range
+
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "먼저 점검할 셀 범위를 선택하세요.", vbInformation
+        Exit Sub
+    End If
+
+    Set targetRange = Selection
+    For Each cell In targetRange.Cells
+        If Len(Trim(CStr(cell.Value))) = 0 Then
+            cell.Interior.Color = RGB(255, 235, 156)
+        End If
+    Next cell
+
+    MsgBox "빈칸 표시가 완료되었습니다.", vbInformation
+End Sub'''
+                st.code(safe_vba, language="vb")
+                st.caption("현재 선택한 범위의 빈 셀만 노란색으로 표시하며 파일 삭제나 외부 전송 기능은 없습니다.")
+
+        with apply_tab:
+            st.markdown("#### 받은 VBA 코드를 Excel에 적용하는 순서")
+            st.markdown(
+                """
+1. **원본 파일의 복사본을 먼저 만듭니다.** 중요한 자료에는 바로 적용하지 않습니다.
+2. Windows 데스크톱 Excel에서 복사본을 열고 `다른 이름으로 저장`을 선택합니다.
+3. 파일 형식을 **Excel 매크로 사용 통합 문서(`.xlsm`)**로 저장합니다.
+4. 키보드에서 `Alt + F11`을 눌러 VBA 편집기를 엽니다.
+5. 왼쪽 프로젝트 창에서 현재 통합문서를 선택한 뒤 `삽입(Insert) → 모듈(Module)`을 누릅니다.
+6. 오른쪽의 빈 코드 창에 AI가 작성한 VBA 코드 전체를 붙여 넣습니다.
+7. 코드 상단의 **시트명·열 번호·결과 시트명**을 실제 파일 구조에 맞게 수정합니다.
+8. `디버그(Debug) → VBAProject 컴파일(Compile)`로 문법 오류를 먼저 확인합니다.
+9. Excel 화면으로 돌아가 `Alt + F8`을 누르고 실행할 매크로를 선택해 실행합니다.
+10. 결과가 맞는지 행 수·합계·누락 여부를 원본과 비교한 뒤 저장합니다.
+                """
+            )
+            st.info("웹용 Excel에서는 VBA 매크로를 만들거나 실행할 수 없습니다. Windows 데스크톱 Excel을 기준으로 한 안내입니다.")
+
+        with safety_tab:
+            st.markdown("#### 실행 전에 반드시 확인하세요")
+            st.markdown(
+                """
+- 코드에 `Kill`, `Shell`, `CreateObject("WScript.Shell")`, 인터넷 주소, 이메일 전송 기능이 있으면 실행을 중단합니다.
+- 원본 삭제, 전체 행 삭제, 덮어쓰기 코드가 있는지 확인합니다.
+- 처음에는 가상 데이터 5~10행이 든 복사본에서 시험합니다.
+- 실행 전후의 전체 행 수와 주요 금액 합계를 비교합니다.
+- 출처가 불분명한 매크로 파일의 **콘텐츠 사용** 버튼을 누르지 않습니다.
+- 기관의 매크로 실행·보안 정책이 우선이며, 차단된 설정을 임의로 해제하지 않습니다.
+                """
+            )
+            st.markdown("#### 자주 생기는 오류")
+            st.dataframe(
+                pd.DataFrame([
+                    ["매크로 목록에 없음", "코드가 표준 모듈에 있는지, Sub가 Private인지 확인"],
+                    ["첨자 사용이 잘못되었습니다", "코드의 시트명이 실제 탭 이름과 같은지 확인"],
+                    ["형식이 일치하지 않습니다", "숫자·날짜 열에 문자나 빈칸이 섞였는지 확인"],
+                    ["매크로 실행이 차단됨", "기관 보안담당자의 정책과 허용 절차 확인"],
+                    ["저장 후 코드가 사라짐", "파일을 .xlsx가 아닌 .xlsm 형식으로 저장했는지 확인"],
+                ], columns=["증상", "확인할 사항"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+    else:
+        uploads = st.file_uploader(
+            "CSV 또는 XLSX 파일을 선택하세요",
+            type=["csv", "xlsx"],
+            accept_multiple_files=True,
+            help="파일을 여러 개 선택할 수 있으며 XLSX 파일은 모든 시트를 읽습니다.",
+        )
+
+        if not uploads:
+            st.caption("파일을 올리면 선택한 업무의 설정 화면이 나타납니다.")
+
+    if work_type != "고급 업무 매뉴얼" and uploads:
         try:
             frames, source_summary = [], []
             for uploaded in uploads:
@@ -328,4 +449,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.3 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.4 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
