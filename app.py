@@ -94,7 +94,7 @@ with excel_tab:
     st.subheader("엑셀 업무 자동화")
     work_type = st.radio(
         "처리할 업무를 선택하세요",
-        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합", "고급 업무 매뉴얼"],
+        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합", "엑셀 AI 활용 매뉴얼"],
         horizontal=True,
     )
     descriptions = {
@@ -103,18 +103,24 @@ with excel_tab:
         "조건별 집계표": "부서·상태·연도 등 원하는 기준별 건수와 합계·평균을 계산합니다.",
         "지정 서식 정리": "필요한 열만 원하는 순서로 배치하고 열 이름 변경·정렬까지 처리합니다.",
         "부서별 명단 취합": "부서별 제출 명단을 합치고 중복·누락을 점검해 최종 명단을 만듭니다.",
-        "고급 업무 매뉴얼": "복잡한 업무는 AI에게 정확히 질문하고, 받은 VBA 코드를 안전하게 적용하는 방법을 안내합니다.",
+        "엑셀 AI 활용 매뉴얼": "복잡한 업무는 AI에게 정확히 질문하고, 받은 VBA 코드를 안전하게 적용하는 방법을 안내합니다.",
     }
     st.info(descriptions[work_type])
 
-    if work_type == "고급 업무 매뉴얼":
+    if work_type == "엑셀 AI 활용 매뉴얼":
+        st.markdown("#### VBA가 무엇인가요?")
+        st.write(
+            "VBA(Visual Basic for Applications)는 데스크톱 Excel에 들어 있는 자동화용 프로그래밍 언어입니다. "
+            "사람이 매번 클릭하고 복사하던 작업을 코드로 기록해 한 번에 실행할 수 있습니다."
+        )
+        v1, v2, v3 = st.columns(3)
+        v1.markdown("**이럴 때 사용해요**  \n파일 반복 처리, 시트 분리, 서식 적용처럼 여러 단계를 되풀이할 때")
+        v2.markdown("**AI의 역할**  \n업무 설명을 바탕으로 VBA 코드 초안을 작성하고 코드 내용을 설명할 때")
+        v3.markdown("**Excel의 역할**  \n검토한 VBA 코드를 실제 데이터가 있는 PC에서 실행할 때")
+        st.caption("VBA 자체가 AI는 아닙니다. AI가 VBA 코드 초안을 만들고, 사용자가 검토한 뒤 Excel이 코드를 실행하는 방식입니다.")
         prompt_tab, apply_tab, safety_tab = st.tabs(["① 프롬프트 만들기", "② VBA 적용하기", "③ 오류·보안 확인"])
         with prompt_tab:
             st.markdown("#### AI에게 VBA 코드 요청하기")
-            advanced_task = st.selectbox(
-                "하고 싶은 작업",
-                ["여러 파일 반복 처리", "조건별로 시트 분리", "반복 서식 자동 적용", "중복·빈칸 일괄 처리", "폴더 안 파일 자동 취합", "직접 입력"],
-            )
             task_examples = {
                 "여러 파일 반복 처리": "선택한 여러 엑셀 파일의 첫 번째 시트에서 자료를 읽어 현재 통합문서의 '통합' 시트에 이어 붙인다.",
                 "조건별로 시트 분리": "'원본' 시트의 부서 열을 기준으로 부서별 시트를 새로 만들고 해당 행을 복사한다.",
@@ -123,13 +129,30 @@ with excel_tab:
                 "폴더 안 파일 자동 취합": "사용자가 선택한 폴더의 모든 xlsx 파일과 각 파일의 지정 시트를 하나의 표로 합친다.",
                 "직접 입력": "",
             }
-            task_detail = st.text_area("업무 설명", value=task_examples[advanced_task], height=110)
+
+            def load_vba_task_example():
+                selected = st.session_state.get("vba_task_choice", "직접 입력")
+                st.session_state["vba_task_detail"] = task_examples[selected]
+
+            if "vba_task_choice" not in st.session_state:
+                st.session_state["vba_task_choice"] = "여러 파일 반복 처리"
+            if "vba_task_detail" not in st.session_state:
+                st.session_state["vba_task_detail"] = task_examples[st.session_state["vba_task_choice"]]
+
+            advanced_task = st.selectbox(
+                "하고 싶은 작업",
+                list(task_examples.keys()),
+                key="vba_task_choice",
+                on_change=load_vba_task_example,
+            )
+            task_detail = st.text_area("업무 설명", key="vba_task_detail", height=110)
             sheet_info = st.text_input("시트명과 주요 열", placeholder="예: 원본 시트 / A열 접수번호, B열 부서, C열 금액")
             special_rule = st.text_area(
                 "세부 조건과 예외",
                 placeholder="예: 제목행은 1행, 빈 행 제외, 기존 시트는 삭제하지 않기, 결과는 새 시트에 만들기",
                 height=90,
             )
+            st.caption("업무 설명이나 아래 입력 내용을 수정하면 완성 프롬프트도 즉시 바뀝니다. 별도의 생성 버튼은 필요하지 않습니다.")
             generated_prompt = f"""당신은 Excel VBA 전문가입니다. 아래 업무를 수행하는 VBA 코드를 작성해 주세요.
 
 [업무 목적]
@@ -233,7 +256,7 @@ End Sub'''
         if not uploads:
             st.caption("파일을 올리면 선택한 업무의 설정 화면이 나타납니다.")
 
-    if work_type != "고급 업무 매뉴얼" and uploads:
+    if work_type != "엑셀 AI 활용 매뉴얼" and uploads:
         try:
             frames, source_summary = [], []
             for uploaded in uploads:
@@ -449,4 +472,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.4 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.5 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
