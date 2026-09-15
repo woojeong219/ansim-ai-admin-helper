@@ -5,6 +5,8 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from document_converter import ACCEPTED_TYPES, OPERATIONS, convert_uploads
+
 
 st.set_page_config(page_title="안심 AI 행정도우미", page_icon="🔒", layout="wide")
 
@@ -26,7 +28,7 @@ st.markdown(
     '<div class="safe-box"><b>개인정보 보호 모드</b><br>'
     "이 시연 버전은 외부 AI API를 사용하지 않습니다. 업로드 파일은 현재 실행 세션에서만 처리하며 "
     "별도로 저장하는 기능을 두지 않았습니다. 공개 배포 환경에서는 실제 개인정보·내부자료 대신 "
-    "가상 또는 비식별 자료만 사용하세요.</div>",
+    "가상 또는 비식별 자료만 사용하세요.<br><b>실제 개인정보나 비공개 행정문서에는 사용하지 마세요.</b></div>",
     unsafe_allow_html=True,
 )
 
@@ -165,15 +167,15 @@ def coerce_numeric(series):
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-excel_tab, doc_tab, mentor_tab = st.tabs(
-    ["📊 엑셀 업무 자동화", "📝 보도자료·보고서", "👩‍💼 신입공무원 멘토"]
+excel_tab, doc_tab, mentor_tab, conversion_tab = st.tabs(
+    ["📊 엑셀 업무 자동화", "📝 보도자료·보고서", "👩‍💼 신입공무원 멘토", "📁 문서 변환"]
 )
 
 with excel_tab:
     st.subheader("엑셀 업무 자동화")
     work_type = st.radio(
         "처리할 업무를 선택하세요",
-        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합", "엑셀 AI 활용 매뉴얼"],
+        ["파일·시트 합치기", "중복·누락·오류 찾기", "조건별 집계표", "지정 서식 정리", "부서별 명단 취합", "엑셀 VBA 코드 적용 매뉴얼", "AI 엑셀 활용 방법"],
         horizontal=True,
     )
     descriptions = {
@@ -182,11 +184,12 @@ with excel_tab:
         "조건별 집계표": "부서·상태·연도 등 원하는 기준별 건수와 합계·평균을 계산합니다.",
         "지정 서식 정리": "필요한 열만 원하는 순서로 배치하고 열 이름 변경·정렬까지 처리합니다.",
         "부서별 명단 취합": "부서별 제출 명단을 합치고 중복·누락을 점검해 최종 명단을 만듭니다.",
-        "엑셀 AI 활용 매뉴얼": "복잡한 업무는 AI에게 정확히 질문하고, 받은 VBA 코드를 안전하게 적용하는 방법을 안내합니다.",
+        "엑셀 VBA 코드 적용 매뉴얼": "AI에게 VBA 코드를 요청하고, 받은 코드를 Excel에 안전하게 적용하는 방법을 안내합니다.",
+        "AI 엑셀 활용 방법": "AI가 엑셀 업무를 정확히 이해하도록 데이터 구조·결과 화면·실행 조건을 설명하는 방법을 안내합니다.",
     }
     st.info(descriptions[work_type])
 
-    if work_type == "엑셀 AI 활용 매뉴얼":
+    if work_type == "엑셀 VBA 코드 적용 매뉴얼":
         st.markdown("#### VBA가 무엇인가요?")
         st.write(
             "VBA(Visual Basic for Applications)는 데스크톱 Excel에 들어 있는 자동화용 프로그래밍 언어입니다. "
@@ -324,6 +327,95 @@ End Sub'''
                 use_container_width=True,
                 hide_index=True,
             )
+    elif work_type == "AI 엑셀 활용 방법":
+        st.warning("실제 개인정보나 비공개 행정문서에는 사용하지 마세요. 열 이름과 가상 예시만으로 업무를 설명하세요.")
+        st.markdown("#### AI에게 엑셀 업무를 잘 요청하는 3가지 방법")
+        st.write(
+            "AI는 사용자의 엑셀 화면을 저절로 알 수 없습니다. 데이터가 어떻게 생겼는지, 결과를 어떻게 만들지, "
+            "어떤 환경에서 사용할지를 함께 알려주면 훨씬 정확한 답을 받을 수 있습니다."
+        )
+
+        st.markdown("### 1. 데이터 구조를 설명하기")
+        st.caption("열이 몇 개인지, 각 열에는 어떤 값이 들어 있는지 알려주세요.")
+        bad1, good1 = st.columns(2)
+        bad1.error("잘못된 예시\n\n엑셀 파일에서 거래처별로 정리해줘.")
+        good1.success(
+            "올바른 예시\n\nA열: 날짜, B열: 거래처명, C열: 품목, D열: 금액이야. "
+            "같은 거래처별로 금액을 합산하고 거래 건수도 함께 표시해줘."
+        )
+        st.info("파일 전체 대신 `A열은 날짜`, `B열은 부서명`처럼 열의 의미를 설명해도 됩니다.")
+
+        st.markdown("### 2. 원하는 최종 화면 설명하기")
+        st.caption("결과 표의 열 구성, 표시 방법, 정렬 순서를 구체적으로 적어주세요.")
+        bad2, good2 = st.columns(2)
+        bad2.error("잘못된 예시\n\n보기 좋게 정리해줘.")
+        good2.success(
+            "올바른 예시\n\n결과를 표로 보여줘. 열 구성은 거래처명 / 합계금액 / 거래건수로 하고, "
+            "금액은 1,000단위 쉼표로 표시해줘. 합계금액이 높은 순서로 정렬해줘."
+        )
+
+        st.markdown("### 3. 실행 환경과 제약사항 설명하기")
+        st.caption("어디에서 실행할지, 인터넷 사용 여부, 사용자의 숙련도와 금지할 기능을 알려주세요.")
+        bad3, good3 = st.columns(2)
+        bad3.error("잘못된 예시\n\n프로그램 만들어줘.")
+        good3.success(
+            "올바른 예시\n\n인터넷 없이 실행 가능한 HTML 파일로 만들어줘. 파일을 드래그앤드롭하면 "
+            "결과가 바로 나와야 하고, 코딩을 전혀 모르는 직장인이 사용할 거야. 원본 파일은 변경하지 마."
+        )
+
+        st.markdown("### 세 가지를 합친 완성 요청 예시")
+        complete_excel_prompt = """엑셀 업무를 자동화하고 싶어.
+
+[데이터 구조]
+A열은 날짜, B열은 거래처명, C열은 품목, D열은 금액이야. 첫 번째 행은 제목이고 실제 데이터는 두 번째 행부터 시작해.
+
+[원하는 결과]
+같은 거래처별로 금액을 합산하고 거래 건수도 계산해줘. 결과 표의 열은 거래처명 / 합계금액 / 거래건수 순서로 만들어줘. 금액은 1,000단위 쉼표로 표시하고 합계금액이 높은 순서로 정렬해줘.
+
+[실행 환경과 조건]
+인터넷 없이 실행 가능한 HTML 파일로 만들어줘. 사용자가 엑셀 파일을 드래그앤드롭하면 결과가 화면에 나타나고, 정리된 엑셀을 다운로드할 수 있어야 해. 코딩을 전혀 모르는 직장인이 사용할 거야. 원본 파일은 변경하거나 삭제하지 마. 실제 개인정보를 외부로 전송하는 기능은 넣지 마."""
+        st.code(complete_excel_prompt, language=None)
+
+        st.markdown("### 내 업무에 맞게 작성하는 복사용 틀")
+        blank_excel_prompt = """엑셀 업무를 자동화하고 싶어.
+
+[데이터 구조]
+- 시트명:
+- 제목이 있는 행:
+- A열:
+- B열:
+- C열:
+- 데이터 예외사항(빈칸, 중복, 합계행 등):
+
+[원하는 결과]
+- 결과 표의 열 구성:
+- 계산하거나 분류할 내용:
+- 정렬 기준:
+- 숫자·날짜 표시 방법:
+- 다운로드할 파일 형식:
+
+[실행 환경과 조건]
+- 사용할 프로그램 또는 환경:
+- 인터넷 연결 가능 여부:
+- 사용자의 코딩 숙련도:
+- 원본 파일 보존 여부:
+- 반드시 제외할 기능:
+
+실제 개인정보나 비공개 행정문서는 사용하지 않고, 가상의 데이터 예시로 설명해줘."""
+        st.caption("아래 상자의 복사 아이콘을 누른 뒤 빈칸을 내 업무에 맞게 채우세요.")
+        st.code(blank_excel_prompt, language=None)
+
+        with st.expander("AI에게 보내기 전 확인사항", expanded=True):
+            st.markdown(
+                """
+- 각 열의 이름과 의미를 적었나요?
+- 데이터가 시작되는 행과 시트명을 적었나요?
+- 원하는 결과 열과 정렬 기준을 적었나요?
+- 실행할 환경과 사용자의 숙련도를 적었나요?
+- 원본 보존, 인터넷 사용 여부 등 제약사항을 적었나요?
+- 실제 개인정보와 비공개 행정자료를 제거했나요?
+                """
+            )
     else:
         if work_type == "부서별 명단 취합":
             st.markdown("#### 기준 열 자동 인식")
@@ -338,7 +430,7 @@ End Sub'''
         if not uploads:
             st.caption("파일을 올리면 선택한 업무의 설정 화면이 나타납니다.")
 
-    if work_type != "엑셀 AI 활용 매뉴얼" and uploads:
+    if work_type not in ("엑셀 VBA 코드 적용 매뉴얼", "AI 엑셀 활용 방법") and uploads:
         try:
             frames, source_summary = [], []
             extraction_errors = []
@@ -701,5 +793,60 @@ with mentor_tab:
             st.checkbox(check, key=f"{topic}-{check}")
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
+with conversion_tab:
+    st.subheader("문서 변환")
+    st.warning(
+        "실제 개인정보나 비공개 행정문서에는 사용하지 마세요. "
+        "업로드 파일은 변환을 위해 웹서버의 임시 공간을 거칩니다."
+    )
+    operation = st.selectbox("변환 방법", OPERATIONS)
+
+    if operation == "PDF → HWP (지원 안내)":
+        st.markdown("#### PDF를 HWP로 바꾸려면")
+        st.write(
+            "공개 Streamlit 서버에서 PDF를 편집 가능한 HWP로 안정적으로 변환하는 기능은 제공하기 어렵습니다. "
+            "HWP는 한컴오피스 전용 형식이며, 공개 서버에서 사용할 수 있는 변환 엔진으로는 원본 모양과 편집 구조를 보장할 수 없습니다."
+        )
+        st.markdown(
+            """
+1. 개인정보가 없는 문서는 한컴오피스의 PDF 열기·변환 기능을 사용합니다.
+2. 실제 행정문서는 기관 PC의 승인된 한컴오피스에서 변환합니다.
+3. 표 편집이 목적이면 이 앱의 `PDF → Excel`, 본문 편집이 목적이면 `PDF → Word`를 먼저 시험합니다.
+4. 스캔 PDF라면 문자 인식(OCR)이 먼저 필요합니다.
+            """
+        )
+    else:
+        accepted = ACCEPTED_TYPES[operation]
+        uploaded_documents = st.file_uploader(
+            "변환할 파일을 올려주세요",
+            type=accepted,
+            accept_multiple_files=True,
+            key=f"converter_{operation}",
+        )
+        if operation in ("PDF 여러 개 합치기", "이미지 → PDF"):
+            st.caption("업로드 목록에 표시된 순서대로 하나의 PDF에 합칩니다.")
+        if operation in ("PDF → Word", "PDF → Excel"):
+            st.info(
+                "텍스트와 표를 편집 가능한 형태로 추출하는 기능입니다. 복잡한 배치·도장·도형·스캔 문서는 "
+                "원본 모양이 그대로 유지되지 않을 수 있습니다."
+            )
+        if operation in ("엑셀 → PDF", "Word → PDF", "HWP → PDF", "HWP → Word"):
+            st.caption("문서 변환 엔진을 사용합니다. 글꼴·쪽 설정·지원 형식에 따라 원본과 일부 차이가 생길 수 있습니다.")
+
+        if st.button("변환하기", type="primary", key="convert_button"):
+            try:
+                with st.spinner("문서를 변환하고 있습니다..."):
+                    download_name, converted_bytes, converted_mime = convert_uploads(operation, uploaded_documents)
+                st.success("변환이 완료되었습니다.")
+                st.download_button(
+                    "📥 변환 결과 다운로드",
+                    converted_bytes,
+                    download_name,
+                    mime=converted_mime,
+                    type="primary",
+                )
+            except Exception as exc:
+                st.error(f"변환하지 못했습니다: {exc}")
+
 st.divider()
-st.caption("프로토타입 v0.9 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v1.1 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
