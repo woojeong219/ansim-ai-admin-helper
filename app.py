@@ -97,33 +97,53 @@ def read_uploaded_raw_tables(uploaded_file):
     return tables
 
 
-def extract_table_below_header(raw_frame, standard_columns):
-    """Find a row containing all standard columns and return the data below it."""
+def detect_header_row(raw_frame, scan_rows=30):
+    """Guess the header row by looking for a dense, mostly text row near the top."""
     normalized = raw_frame.map(lambda value: "" if pd.isna(value) else str(value).strip())
-    best_row, best_map, best_score = None, {}, -1
-    for row_index, row in normalized.iterrows():
-        column_map = {}
-        for standard_name in standard_columns:
-            matches = [col for col, value in row.items() if value == standard_name]
-            if matches:
-                column_map[standard_name] = matches[0]
-        if len(column_map) > best_score:
-            best_row, best_map, best_score = row_index, column_map, len(column_map)
+    limit = min(len(normalized), scan_rows)
+    best_row, best_score = 0, -1
+    for row_index in range(limit):
+        values = [value for value in normalized.iloc[row_index].tolist() if value]
+        if not values:
+            continue
+        unique_count = len(set(values))
+        text_count = sum(not value.replace(",", "").replace(".", "", 1).isdigit() for value in values)
+        next_density = 0
+        if row_index + 1 < len(normalized):
+            next_density = sum(bool(value) for value in normalized.iloc[row_index + 1].tolist())
+        score = unique_count * 100 + text_count * 5 + min(next_density, unique_count)
+        if score > best_score:
+            best_row, best_score = row_index, score
+    return best_row
 
-    missing_columns = [name for name in standard_columns if name not in best_map]
-    if missing_columns:
-        return None, None, missing_columns
 
-    extracted = raw_frame.loc[best_row + 1 :, [best_map[name] for name in standard_columns]].copy()
-    extracted.columns = standard_columns
+def header_row_preview(raw_frame, row_index):
+    values = [str(value).strip() for value in raw_frame.iloc[row_index].tolist() if not pd.isna(value) and str(value).strip()]
+    return " | ".join(values[:8]) or "빈 행"
+
+
+def extract_table_from_header_row(raw_frame, header_row):
+    """Use a selected row as column names and return the non-empty rows below it."""
+    positions, column_names, name_counts = [], [], {}
+    for position, value in enumerate(raw_frame.iloc[header_row].tolist()):
+        if pd.isna(value) or not str(value).strip():
+            continue
+        base_name = str(value).strip()
+        name_counts[base_name] = name_counts.get(base_name, 0) + 1
+        display_name = base_name if name_counts[base_name] == 1 else f"{base_name} ({name_counts[base_name]})"
+        positions.append(position)
+        column_names.append(display_name)
+    if not column_names:
+        return None, []
+
+    extracted = raw_frame.iloc[header_row + 1 :, positions].copy()
+    extracted.columns = column_names
     extracted = extracted.dropna(how="all")
     blank_rows = extracted.astype("string").apply(lambda col: col.str.strip().eq("")).all(axis=1)
     extracted = extracted[~blank_rows]
-    repeated_header = extracted.astype("string").apply(
-        lambda row: all(str(row[name]).strip() == name for name in standard_columns), axis=1
-    )
+    repeated_header = extracted.astype("string").apply(lambda row: list(row.str.strip()) == column_names, axis=1)
     extracted = extracted[~repeated_header].reset_index(drop=True)
-    return extracted, int(best_row) + 1, []
+    return extracted, column_names
 
 
 def normalize_columns(frame):
@@ -306,16 +326,8 @@ End Sub'''
             )
     else:
         if work_type == "부서별 명단 취합":
-            st.markdown("#### 기준 서식 설정")
-            st.caption("각 파일에서 아래 열 이름이 있는 행을 찾아, 그 아래 내용만 한 표로 취합합니다.")
-            standard_columns_text = st.text_input(
-                "결과에 고정할 기준 열",
-                value="연번, 부서명, 직급, 성명, 일시, 교육차수",
-                help="쉼표로 구분해 입력하세요. 입력한 순서가 결과 엑셀의 열 순서가 됩니다.",
-            )
-            preview_columns = [name.strip() for name in standard_columns_text.split(",") if name.strip()]
-            if preview_columns:
-                st.dataframe(pd.DataFrame(columns=preview_columns), use_container_width=True, hide_index=True)
+            st.markdown("#### 기준 열 자동 인식")
+            st.caption("파일을 올리면 표의 시작 행과 열 이름을 자동으로 찾습니다. 결과를 확인한 뒤 직접 바꿀 수도 있습니다.")
         uploads = st.file_uploader(
             "CSV 또는 XLSX 파일을 선택하세요",
             type=["csv", "xlsx"],
@@ -331,27 +343,38 @@ End Sub'''
             frames, source_summary = [], []
             extraction_errors = []
             if work_type == "부서별 명단 취합":
-                standard_columns = [name.strip() for name in standard_columns_text.split(",") if name.strip()]
-                if not standard_columns:
-                    raise ValueError("기준 열을 하나 이상 입력해 주세요.")
-                if len(standard_columns) != len(set(standard_columns)):
-                    raise ValueError("기준 열에 같은 이름을 두 번 입력할 수 없습니다.")
+                raw_tables = []
                 for uploaded in uploads:
                     for sheet_name, raw_df in read_uploaded_raw_tables(uploaded):
-                        source_df, header_row, missing = extract_table_below_header(raw_df, standard_columns)
-                        if missing:
-                            extraction_errors.append(
-                                {"출처파일": uploaded.name, "출처시트": sheet_name,
-                                 "확인 결과": "기준 열을 찾지 못함", "찾지 못한 열": ", ".join(missing)}
-                            )
-                            continue
-                        source_df.insert(0, "출처시트", sheet_name)
-                        source_df.insert(0, "출처파일", uploaded.name)
-                        frames.append(source_df)
-                        source_summary.append(
-                            {"출처파일": uploaded.name, "출처시트": sheet_name,
-                             "기준 열 위치": f"{header_row}행", "취합 행 수": len(source_df)}
+                        raw_tables.append((uploaded.name, sheet_name, raw_df))
+
+                st.markdown("#### 1. 파일별 기준 열 확인")
+                st.caption("자동으로 선택된 행이 실제 열 이름 행과 다르면 해당 파일의 행 번호를 바꿔주세요.")
+                for table_index, (file_name, sheet_name, raw_df) in enumerate(raw_tables):
+                    detected_row = detect_header_row(raw_df)
+                    row_options = list(range(min(len(raw_df), 30)))
+                    selected_header_row = st.selectbox(
+                        f"{file_name} · {sheet_name}의 기준 열 행",
+                        row_options,
+                        index=row_options.index(detected_row),
+                        format_func=lambda row, frame=raw_df: f"{row + 1}행 — {header_row_preview(frame, row)}",
+                        key=f"header_row_{table_index}_{file_name}_{sheet_name}",
+                    )
+                    source_df, recognized_columns = extract_table_from_header_row(raw_df, selected_header_row)
+                    if source_df is None:
+                        extraction_errors.append(
+                            {"출처파일": file_name, "출처시트": sheet_name,
+                             "확인 결과": "선택한 행이 비어 있음"}
                         )
+                        continue
+                    source_df.insert(0, "출처시트", sheet_name)
+                    source_df.insert(0, "출처파일", file_name)
+                    frames.append(source_df)
+                    source_summary.append(
+                        {"출처파일": file_name, "출처시트": sheet_name,
+                         "기준 열 위치": f"{selected_header_row + 1}행",
+                         "인식된 열": ", ".join(recognized_columns), "취합 행 수": len(source_df)}
+                    )
             else:
                 for uploaded in uploads:
                     for sheet_name, source_df in read_uploaded_tables(uploaded):
@@ -363,8 +386,7 @@ End Sub'''
                             {"출처파일": uploaded.name, "출처시트": sheet_name, "행 수": len(source_df)}
                         )
             if not frames:
-                missing_text = extraction_errors[0]["찾지 못한 열"] if extraction_errors else "기준 열"
-                raise ValueError(f"업로드 파일에서 기준 열을 찾지 못했습니다: {missing_text}")
+                raise ValueError("선택한 기준 열 행 아래에서 취합할 자료를 찾지 못했습니다.")
             df = pd.concat(frames, ignore_index=True, sort=False)
             source_summary_df = pd.DataFrame(source_summary)
             data_columns = [c for c in df.columns if c not in ["출처파일", "출처시트"]]
@@ -524,16 +546,33 @@ End Sub'''
                 output_name = "지정서식_정리결과.xlsx"
 
             else:
-                st.markdown("#### 정렬 및 결과 설정")
+                st.markdown("#### 2. 결과 열과 순서 선택")
+                selected_columns = st.multiselect(
+                    "결과에 포함할 열",
+                    data_columns,
+                    default=data_columns,
+                    help="파일들에서 인식한 모든 열이 표시됩니다. 선택한 순서가 결과 엑셀의 열 순서가 됩니다.",
+                )
+                if not selected_columns:
+                    raise ValueError("결과에 포함할 열을 하나 이상 선택해 주세요.")
+
+                st.markdown("#### 3. 정렬 및 연번 설정")
                 left, right = st.columns(2)
                 sort_columns = left.multiselect(
                     "정렬 기준",
-                    standard_columns,
-                    help="두 개 이상 선택하면 선택한 순서대로 정렬합니다. 예: 부서명 → 직급 → 성명",
+                    selected_columns,
+                    help="두 개 이상 선택하면 선택한 순서대로 정렬합니다. 각 파일의 서식에 맞는 열을 자유롭게 고를 수 있습니다.",
                 )
                 sort_direction = right.radio("정렬 방향", ["오름차순", "내림차순"], horizontal=True)
                 include_source = left.checkbox("결과에 출처파일·출처시트 표시", value=False)
-                renumber = right.checkbox("정렬 후 연번을 1번부터 다시 매기기", value=True, disabled="연번" not in standard_columns)
+                sequence_options = ["다시 매기지 않음"] + selected_columns
+                default_sequence = sequence_options.index("연번") if "연번" in sequence_options else 0
+                sequence_column = right.selectbox(
+                    "1번부터 다시 매길 열",
+                    sequence_options,
+                    index=default_sequence,
+                    help="연번·번호처럼 순서를 표시할 열을 선택하세요. 해당 열이 없으면 다시 매기지 않음을 선택합니다.",
+                )
 
                 output_df = df.copy()
                 if sort_columns:
@@ -544,21 +583,31 @@ End Sub'''
                         key=lambda series: series.astype("string").str.strip(),
                     )
                 output_df = output_df.reset_index(drop=True)
-                if renumber and "연번" in output_df.columns:
-                    output_df["연번"] = range(1, len(output_df) + 1)
-                result_columns = (["출처파일", "출처시트"] if include_source else []) + standard_columns
+                if sequence_column != "다시 매기지 않음":
+                    output_df[sequence_column] = range(1, len(output_df) + 1)
+                result_columns = (["출처파일", "출처시트"] if include_source else []) + selected_columns
                 output_df = output_df[result_columns]
 
-                missing_mask = output_df[standard_columns].isna() | output_df[standard_columns].astype("string").apply(
+                missing_mask = output_df[selected_columns].isna() | output_df[selected_columns].astype("string").apply(
                     lambda col: col.str.strip().eq("")
                 )
                 extraction_errors_df = pd.DataFrame(
                     extraction_errors,
-                    columns=["출처파일", "출처시트", "확인 결과", "찾지 못한 열"],
+                    columns=["출처파일", "출처시트", "확인 결과"],
                 )
+                coverage_rows = []
+                for source_frame in frames:
+                    available = [col for col in source_frame.columns if col not in ["출처파일", "출처시트"]]
+                    coverage_rows.append(
+                        {"출처파일": source_frame["출처파일"].iloc[0],
+                         "출처시트": source_frame["출처시트"].iloc[0],
+                         "없는 선택 열": ", ".join([col for col in selected_columns if col not in available]) or "없음"}
+                    )
+                coverage_df = pd.DataFrame(coverage_rows)
                 sheets = {
                     "통합명단": output_df,
                     "파일별취합현황": source_summary_df,
+                    "열일치확인": coverage_df,
                     "기준열확인필요": extraction_errors_df,
                     "빈칸확인": output_df[missing_mask.any(axis=1)],
                 }
@@ -567,8 +616,11 @@ End Sub'''
                 m2.metric("취합된 전체 행", len(output_df))
                 m3.metric("기준 열 확인 필요", len(extraction_errors_df))
                 if extraction_errors:
-                    st.warning("일부 파일·시트에서 기준 열을 모두 찾지 못해 취합에서 제외했습니다.")
+                    st.warning("일부 파일·시트에서 선택한 기준 열 행이 비어 있어 취합에서 제외했습니다.")
                     st.dataframe(extraction_errors_df, use_container_width=True, hide_index=True)
+                if (coverage_df["없는 선택 열"] != "없음").any():
+                    st.warning("일부 파일에는 선택한 열이 없습니다. 해당 파일의 값은 결과에서 빈칸으로 표시됩니다.")
+                    st.dataframe(coverage_df, use_container_width=True, hide_index=True)
                 st.dataframe(output_df.head(300), use_container_width=True, hide_index=True)
                 output_name = "부서별_명단_취합결과.xlsx"
 
@@ -650,4 +702,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.8 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.9 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
