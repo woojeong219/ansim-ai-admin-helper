@@ -817,6 +817,30 @@ with conversion_tab:
         )
     else:
         accepted = ACCEPTED_TYPES[operation]
+        conversion_mode = "editable"
+        if operation in ("PDF → Word", "PDF → Excel", "HWP → Word"):
+            st.markdown("#### 변환 방식 선택")
+            mode_label = st.radio(
+                "변환 후 어떻게 사용하실 건가요?",
+                ["원본 모습 우선", "내용 편집 우선"],
+                horizontal=True,
+                key=f"conversion_mode_{operation}",
+            )
+            conversion_mode = "layout" if mode_label == "원본 모습 우선" else "editable"
+            original_col, editable_col = st.columns(2)
+            original_col.info(
+                "**원본 모습 우선**\n\n그림·표·배치를 페이지 이미지로 유지합니다. 원본과 비슷하게 보이지만 글자와 표를 직접 수정하기 어렵습니다."
+            )
+            editable_col.info(
+                "**내용 편집 우선**\n\n글자와 표를 편집 가능한 내용으로 추출합니다. 수정하기 쉽지만 복잡한 서식과 그림 위치가 달라질 수 있습니다."
+            )
+            if operation == "PDF → Excel" and conversion_mode == "layout":
+                st.caption("PDF 각 페이지가 Excel의 개별 시트에 이미지로 들어갑니다. 셀 계산과 표 수정은 할 수 없습니다.")
+            elif operation in ("PDF → Word", "HWP → Word") and conversion_mode == "layout":
+                st.caption("각 페이지가 Word에 이미지로 들어갑니다. 화면은 유지되지만 글자를 선택하거나 수정하기 어렵습니다.")
+            else:
+                st.caption("단순한 본문과 표는 편집할 수 있습니다. 스캔 문서는 OCR이 없으면 글자로 추출되지 않습니다.")
+
         uploaded_documents = st.file_uploader(
             "변환할 파일을 올려주세요",
             type=accepted,
@@ -825,18 +849,15 @@ with conversion_tab:
         )
         if operation in ("PDF 여러 개 합치기", "이미지 → PDF"):
             st.caption("업로드 목록에 표시된 순서대로 하나의 PDF에 합칩니다.")
-        if operation in ("PDF → Word", "PDF → Excel"):
-            st.info(
-                "텍스트와 표를 편집 가능한 형태로 추출하는 기능입니다. 복잡한 배치·도장·도형·스캔 문서는 "
-                "원본 모양이 그대로 유지되지 않을 수 있습니다."
-            )
         if operation in ("엑셀 → PDF", "Word → PDF", "HWP → PDF", "HWP → Word"):
             st.caption("문서 변환 엔진을 사용합니다. 글꼴·쪽 설정·지원 형식에 따라 원본과 일부 차이가 생길 수 있습니다.")
 
         if st.button("변환하기", type="primary", key="convert_button"):
             try:
                 with st.spinner("문서를 변환하고 있습니다..."):
-                    download_name, converted_bytes, converted_mime = convert_uploads(operation, uploaded_documents)
+                    download_name, converted_bytes, converted_mime = convert_uploads(
+                        operation, uploaded_documents, conversion_mode=conversion_mode
+                    )
                 st.success("변환이 완료되었습니다.")
                 st.download_button(
                     "📥 변환 결과 다운로드",
@@ -849,4 +870,4 @@ with conversion_tab:
                 st.error(f"변환하지 못했습니다: {exc}")
 
 st.divider()
-st.caption("프로토타입 v1.1 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v1.2 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")

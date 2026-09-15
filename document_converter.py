@@ -126,6 +126,70 @@ def _pdf_to_images(upload):
     return _package_outputs(outputs)
 
 
+def _pdf_bytes_to_word_layout(pdf_bytes, output_stem):
+    import fitz
+    from docx import Document
+    from docx.shared import Inches, Pt
+
+    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if len(pdf) == 0:
+        raise ValueError("PDF에 변환할 페이지가 없습니다.")
+    document = Document()
+    first_rect = pdf[0].rect
+    section = document.sections[0]
+    section.page_width = Inches(first_rect.width / 72)
+    section.page_height = Inches(first_rect.height / 72)
+    for margin_name in ("top_margin", "bottom_margin", "left_margin", "right_margin"):
+        setattr(section, margin_name, Inches(0.1))
+
+    for page_number, page in enumerate(pdf):
+        if page_number:
+            document.add_page_break()
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        image_stream = io.BytesIO(pixmap.tobytes("png"))
+        page_width = page.rect.width / 72
+        page_height = page.rect.height / 72
+        scale = min((section.page_width.inches - 0.2) / page_width, (section.page_height.inches - 0.2) / page_height)
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.space_before = Pt(0)
+        run = paragraph.add_run()
+        run.add_picture(image_stream, width=Inches(page_width * scale), height=Inches(page_height * scale))
+    pdf.close()
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return f"{output_stem}_원본모습.docx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _pdf_to_word_layout(upload):
+    return _pdf_bytes_to_word_layout(upload.getvalue(), Path(upload.name).stem)
+
+
+def _pdf_to_excel_layout(upload):
+    import fitz
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as ExcelImage
+
+    pdf = fitz.open(stream=upload.getvalue(), filetype="pdf")
+    if len(pdf) == 0:
+        raise ValueError("PDF에 변환할 페이지가 없습니다.")
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    image_streams = []
+    for page_number, page in enumerate(pdf, start=1):
+        worksheet = workbook.create_sheet(f"{page_number}페이지")
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        image_stream = io.BytesIO(pixmap.tobytes("png"))
+        image_streams.append(image_stream)
+        image = ExcelImage(image_stream)
+        worksheet.add_image(image, "A1")
+        worksheet.sheet_view.showGridLines = False
+    pdf.close()
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return f"{Path(upload.name).stem}_원본모습.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 def _pdf_to_word(upload):
     import fitz
     from docx import Document
@@ -179,7 +243,7 @@ def _pdf_to_excel(upload):
     return f"{Path(upload.name).stem}.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def convert_uploads(operation, uploads):
+def convert_uploads(operation, uploads, conversion_mode="editable"):
     if not uploads:
         raise ValueError("변환할 파일을 올려주세요.")
     if operation == "이미지 → PDF":
@@ -194,11 +258,15 @@ def convert_uploads(operation, uploads):
         if operation in ("엑셀 → PDF", "Word → PDF", "HWP → PDF"):
             outputs.append(_libreoffice_convert(upload, "pdf"))
         elif operation == "HWP → Word":
-            outputs.append(_libreoffice_convert(upload, "docx"))
+            if conversion_mode == "layout":
+                _pdf_name, pdf_bytes, _pdf_mime = _libreoffice_convert(upload, "pdf")
+                outputs.append(_pdf_bytes_to_word_layout(pdf_bytes, Path(upload.name).stem))
+            else:
+                outputs.append(_libreoffice_convert(upload, "docx"))
         elif operation == "PDF → Word":
-            outputs.append(_pdf_to_word(upload))
+            outputs.append(_pdf_to_word_layout(upload) if conversion_mode == "layout" else _pdf_to_word(upload))
         elif operation == "PDF → Excel":
-            outputs.append(_pdf_to_excel(upload))
+            outputs.append(_pdf_to_excel_layout(upload) if conversion_mode == "layout" else _pdf_to_excel(upload))
         elif operation == "PDF → 이미지":
             outputs.append(_pdf_to_images(upload))
     return _package_outputs(outputs)
