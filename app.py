@@ -86,6 +86,19 @@ def normalize_columns(frame):
     return frame
 
 
+def coerce_numeric(series):
+    """Convert ordinary Excel amounts to numbers without treating dates as amounts."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.Series(float("nan"), index=series.index)
+    cleaned = (
+        series.astype("string")
+        .str.replace(",", "", regex=False)
+        .str.replace("원", "", regex=False)
+        .str.strip()
+    )
+    return pd.to_numeric(cleaned, errors="coerce")
+
+
 excel_tab, doc_tab, mentor_tab = st.tabs(
     ["📊 엑셀 업무 자동화", "📝 보도자료·보고서", "👩‍💼 신입공무원 멘토"]
 )
@@ -325,19 +338,49 @@ End Sub'''
                 output_name = "중복_누락_오류_점검결과.xlsx"
 
             elif work_type == "조건별 집계표":
-                group_columns = st.multiselect("집계 기준 열", data_columns, max_selections=3)
-                value_column = st.selectbox("계산할 숫자 열", ["건수만 계산"] + data_columns)
-                aggregation = st.selectbox("계산 방법", ["합계", "평균", "최대값", "최소값"])
+                st.caption("집계 기준 열은 자료를 묶는 기준(예: 날짜·부서), 숫자 열은 계산할 값(예: 금액)입니다.")
+                group_columns = st.multiselect(
+                    "집계 기준 열",
+                    data_columns,
+                    max_selections=3,
+                    help="같은 값끼리 한 행으로 묶을 열입니다. 예: 날짜, 부서, 처리상태",
+                )
+                numeric_candidates = []
+                for col in data_columns:
+                    if col in group_columns:
+                        continue
+                    converted = coerce_numeric(df[col])
+                    original_values = df[col].notna().sum()
+                    if original_values and converted.notna().sum() / original_values >= 0.8:
+                        numeric_candidates.append(col)
+                value_column = st.selectbox(
+                    "계산할 숫자 열",
+                    ["건수만 계산"] + numeric_candidates,
+                    help="집계 기준으로 선택한 열과 날짜·문자 열은 자동으로 제외됩니다.",
+                )
+                if value_column == "건수만 계산":
+                    aggregation = None
+                    st.caption("선택한 기준별 자료 개수를 계산합니다.")
+                else:
+                    aggregation = st.selectbox("계산 방법", ["합계", "평균", "최대값", "최소값"])
                 if group_columns:
                     if value_column == "건수만 계산":
                         summary = df.groupby(group_columns, dropna=False).size().reset_index(name="건수")
                     else:
-                        numeric_values = pd.to_numeric(df[value_column], errors="coerce")
+                        numeric_values = coerce_numeric(df[value_column])
                         temp = df[group_columns].copy()
-                        temp[value_column] = numeric_values
+                        calculation_name = f"__calculation_{value_column}"
+                        temp[calculation_name] = numeric_values
                         method_map = {"합계": "sum", "평균": "mean", "최대값": "max", "최소값": "min"}
-                        summary = temp.groupby(group_columns, dropna=False)[value_column].agg(method_map[aggregation]).reset_index()
-                        summary = summary.rename(columns={value_column: f"{value_column}_{aggregation}"})
+                        summary = (
+                            temp.groupby(group_columns, dropna=False)[calculation_name]
+                            .agg(method_map[aggregation])
+                            .reset_index()
+                            .rename(columns={calculation_name: f"{value_column}_{aggregation}"})
+                        )
+                        excluded_values = int(df[value_column].notna().sum() - numeric_values.notna().sum())
+                        if excluded_values:
+                            st.warning(f"'{value_column}' 열에서 숫자로 바꿀 수 없는 값 {excluded_values:,}건을 계산에서 제외했습니다.")
                     sheets.update({"원본": df, "조건별집계": summary})
                     st.dataframe(summary, use_container_width=True, hide_index=True)
                 else:
@@ -472,4 +515,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.5 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.6 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
