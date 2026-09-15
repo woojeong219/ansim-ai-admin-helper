@@ -304,11 +304,38 @@ End Sub'''
                 output_name = "파일_시트_통합결과.xlsx"
 
             elif work_type == "중복·누락·오류 찾기":
+                st.markdown("#### 무엇을 확인할지 선택하세요")
+                st.caption("열은 엑셀 표의 세로 항목을 뜻합니다. 예: 성명, 접수번호, 금액, 신청일")
+                with st.expander("선택 방법 예시", expanded=True):
+                    st.markdown(
+                        """
+- **같은 자료 찾기:** `접수번호`를 선택하면 접수번호가 같은 행을 찾아줍니다.
+- **빈칸 찾기:** 반드시 작성해야 하는 `성명`, `부서` 등을 선택합니다.
+- **숫자가 아닌 값 찾기:** 합계에 사용하는 `금액`, `수량` 등을 선택합니다.
+- **날짜가 아닌 값 찾기:** `신청일`, `처리일` 등을 선택합니다.
+                        """
+                    )
                 left, right = st.columns(2)
-                duplicate_keys = left.multiselect("중복 판정 열", data_columns)
-                required_columns = right.multiselect("필수 입력 열", data_columns)
-                numeric_columns = left.multiselect("숫자 형식이어야 하는 열", data_columns)
-                date_columns = right.multiselect("날짜 형식이어야 하는 열", data_columns)
+                duplicate_keys = left.multiselect(
+                    "어떤 항목이 같으면 중복으로 볼까요?",
+                    data_columns,
+                    help="예: 접수번호를 선택하면 접수번호가 같은 행을 찾습니다. 성명과 생년월일을 함께 선택할 수도 있습니다. 아무것도 선택하지 않으면 모든 항목이 똑같은 행을 찾습니다.",
+                )
+                required_columns = right.multiselect(
+                    "비어 있으면 안 되는 항목",
+                    data_columns,
+                    help="반드시 내용이 있어야 하는 항목을 선택하세요. 선택한 항목의 빈칸을 찾아줍니다.",
+                )
+                numeric_columns = left.multiselect(
+                    "숫자만 입력되어야 하는 항목",
+                    data_columns,
+                    help="예: 금액, 수량, 인원. 글자나 잘못된 기호가 섞인 값을 찾아줍니다.",
+                )
+                date_columns = right.multiselect(
+                    "날짜로 입력되어야 하는 항목",
+                    data_columns,
+                    help="예: 신청일, 처리일. 날짜로 인식할 수 없는 값을 찾아줍니다.",
+                )
 
                 duplicate_subset = duplicate_keys or data_columns
                 duplicate_mask = df.duplicated(subset=duplicate_subset, keep=False)
@@ -330,11 +357,11 @@ End Sub'''
                 issue_df = pd.DataFrame(format_issues, columns=["행", "열", "오류", "입력값"])
                 missing_rows = df[missing_mask.any(axis=1)]
                 m1, m2, m3 = st.columns(3)
-                m1.metric("중복 의심 행", int(duplicate_mask.sum()))
-                m2.metric("필수값 누락", int(missing_mask.sum().sum()))
-                m3.metric("형식 오류", len(issue_df))
-                sheets.update({"원본": df, "중복의심": df[duplicate_mask], "필수값누락": missing_rows, "형식오류": issue_df})
-                st.dataframe(issue_df if len(issue_df) else pd.DataFrame({"결과": ["형식 오류 없음"]}), use_container_width=True, hide_index=True)
+                m1.metric("같은 자료 의심", int(duplicate_mask.sum()))
+                m2.metric("빈칸 발견", int(missing_mask.sum().sum()))
+                m3.metric("입력 형식 확인 필요", len(issue_df))
+                sheets.update({"원본": df, "같은자료확인": df[duplicate_mask], "빈칸확인": missing_rows, "입력형식확인": issue_df})
+                st.dataframe(issue_df if len(issue_df) else pd.DataFrame({"결과": ["숫자·날짜 입력 형식에 문제가 없습니다."]}), use_container_width=True, hide_index=True)
                 output_name = "중복_누락_오류_점검결과.xlsx"
 
             elif work_type == "조건별 집계표":
@@ -515,4 +542,4 @@ with mentor_tab:
         st.info("기관별 규정과 내부 결재선이 다를 수 있으므로 최종 처리는 소속기관의 최신 지침과 담당자에게 확인하세요.")
 
 st.divider()
-st.caption("프로토타입 v0.6 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v0.7 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
