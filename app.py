@@ -8,7 +8,7 @@ import streamlit as st
 from document_converter import ACCEPTED_TYPES, OPERATIONS, convert_uploads
 
 
-st.set_page_config(page_title="안심 AI 행정도우미", page_icon="🔒", layout="wide")
+st.set_page_config(page_title="군포시 AI 업무 도우미", page_icon="🏛️", layout="wide")
 
 st.markdown(
     """
@@ -17,12 +17,21 @@ st.markdown(
     .safe-box {background:#eef8f1; border:1px solid #b8dfc3; padding:16px 18px;
       border-radius:12px; margin-bottom:18px; color:#174c2c;}
     .small-note {color:#5d6673; font-size:.9rem;}
+    .example-card {padding:18px 20px; border-radius:12px; margin:10px 0;
+      box-shadow:0 2px 8px rgba(31,41,55,.06);}
+    .example-bad {background:#fff5f5; border:2px solid #ef9a9a;}
+    .example-good {background:#f0faf3; border:2px solid #77c58b;}
+    .example-label {font-weight:800; font-size:1.02rem; margin-bottom:8px;}
+    .example-bad .example-label {color:#b42318;}
+    .example-good .example-label {color:#176b34;}
+    .example-text {font-size:1rem; line-height:1.65; color:#273142;}
+    .example-change {text-align:center; color:#53606f; font-weight:700; margin:6px 0;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("🔒 안심 AI 행정도우미")
+st.title("🏛️ 군포시 AI 업무 도우미")
 st.caption("AI는 활용하되, 개인정보는 보내지 않는다")
 st.markdown(
     '<div class="safe-box"><b>개인정보 보호 모드</b><br>'
@@ -55,6 +64,23 @@ def mask_text(text):
     text = PHONE_RE.sub("[연락처]", text)
     text = EMAIL_RE.sub("[이메일]", text)
     return text
+
+
+def render_example_pair(bad_text, good_text):
+    st.markdown(
+        f"""
+        <div class="example-card example-bad">
+          <div class="example-label">✕ 이렇게만 말하면 AI가 정확히 알기 어려워요</div>
+          <div class="example-text">{bad_text}</div>
+        </div>
+        <div class="example-change">↓ 필요한 정보를 구체적으로 더하면</div>
+        <div class="example-card example-good">
+          <div class="example-label">✓ 이렇게 요청해 보세요</div>
+          <div class="example-text">{good_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def to_excel_bytes(sheets):
@@ -337,30 +363,27 @@ End Sub'''
 
         st.markdown("### 1. 데이터 구조를 설명하기")
         st.caption("열이 몇 개인지, 각 열에는 어떤 값이 들어 있는지 알려주세요.")
-        bad1, good1 = st.columns(2)
-        bad1.error("잘못된 예시\n\n엑셀 파일에서 거래처별로 정리해줘.")
-        good1.success(
-            "올바른 예시\n\nA열: 날짜, B열: 거래처명, C열: 품목, D열: 금액이야. "
-            "같은 거래처별로 금액을 합산하고 거래 건수도 함께 표시해줘."
+        render_example_pair(
+            "엑셀 파일에서 거래처별로 정리해줘.",
+            "<b>A열은 날짜, B열은 거래처명, C열은 품목, D열은 금액</b>이야. "
+            "같은 거래처별로 금액을 합산하고 거래 건수도 함께 표시해줘.",
         )
         st.info("파일 전체 대신 `A열은 날짜`, `B열은 부서명`처럼 열의 의미를 설명해도 됩니다.")
 
         st.markdown("### 2. 원하는 최종 화면 설명하기")
         st.caption("결과 표의 열 구성, 표시 방법, 정렬 순서를 구체적으로 적어주세요.")
-        bad2, good2 = st.columns(2)
-        bad2.error("잘못된 예시\n\n보기 좋게 정리해줘.")
-        good2.success(
-            "올바른 예시\n\n결과를 표로 보여줘. 열 구성은 거래처명 / 합계금액 / 거래건수로 하고, "
-            "금액은 1,000단위 쉼표로 표시해줘. 합계금액이 높은 순서로 정렬해줘."
+        render_example_pair(
+            "보기 좋게 정리해줘.",
+            "결과를 <b>표</b>로 보여줘. 열 구성은 <b>거래처명 / 합계금액 / 거래건수</b>로 하고, "
+            "금액은 1,000단위 쉼표로 표시해줘. 합계금액이 높은 순서로 정렬해줘.",
         )
 
         st.markdown("### 3. 실행 환경과 제약사항 설명하기")
         st.caption("어디에서 실행할지, 인터넷 사용 여부, 사용자의 숙련도와 금지할 기능을 알려주세요.")
-        bad3, good3 = st.columns(2)
-        bad3.error("잘못된 예시\n\n프로그램 만들어줘.")
-        good3.success(
-            "올바른 예시\n\n인터넷 없이 실행 가능한 HTML 파일로 만들어줘. 파일을 드래그앤드롭하면 "
-            "결과가 바로 나와야 하고, 코딩을 전혀 모르는 직장인이 사용할 거야. 원본 파일은 변경하지 마."
+        render_example_pair(
+            "프로그램 만들어줘.",
+            "<b>인터넷 없이 실행 가능한 HTML 파일</b>로 만들어줘. 파일을 드래그앤드롭하면 "
+            "결과가 바로 나와야 하고, 코딩을 전혀 모르는 직장인이 사용할 거야. <b>원본 파일은 변경하지 마.</b>",
         )
 
         st.markdown("### 세 가지를 합친 완성 요청 예시")
@@ -870,4 +893,4 @@ with conversion_tab:
                 st.error(f"변환하지 못했습니다: {exc}")
 
 st.divider()
-st.caption("프로토타입 v1.2 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
+st.caption("프로토타입 v1.3 · 개인정보 탐지는 보조 기능이며 모든 개인정보를 완벽히 식별한다는 보장은 없습니다.")
