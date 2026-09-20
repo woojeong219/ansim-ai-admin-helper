@@ -17,7 +17,9 @@ st.markdown(
     .safe-box {background:#eef8f1; border:1px solid #b8dfc3; padding:16px 18px;
       border-radius:12px; margin-bottom:18px; color:#174c2c;}
     .small-note {color:#5d6673; font-size:.9rem;}
-    .example-card {padding:18px 20px; border-radius:12px; margin:10px 0;
+    .example-grid {display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      gap:16px; align-items:stretch; margin:12px 0 18px;}
+    .example-card {padding:18px 20px; border-radius:12px; margin:0;
       box-shadow:0 2px 8px rgba(31,41,55,.06);}
     .example-bad {background:#fff5f5; border:2px solid #ef9a9a;}
     .example-good {background:#f0faf3; border:2px solid #77c58b;}
@@ -25,7 +27,9 @@ st.markdown(
     .example-bad .example-label {color:#b42318;}
     .example-good .example-label {color:#176b34;}
     .example-text {font-size:1rem; line-height:1.65; color:#273142;}
-    .example-change {text-align:center; color:#53606f; font-weight:700; margin:6px 0;}
+    @media (max-width: 700px) {
+      .example-grid {grid-template-columns:1fr;}
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -69,14 +73,15 @@ def mask_text(text):
 def render_example_pair(bad_text, good_text):
     st.markdown(
         f"""
-        <div class="example-card example-bad">
-          <div class="example-label">✕ 이렇게만 말하면 AI가 정확히 알기 어려워요</div>
-          <div class="example-text">{bad_text}</div>
-        </div>
-        <div class="example-change">↓ 필요한 정보를 구체적으로 더하면</div>
-        <div class="example-card example-good">
-          <div class="example-label">✓ 이렇게 요청해 보세요</div>
-          <div class="example-text">{good_text}</div>
+        <div class="example-grid">
+          <div class="example-card example-bad">
+            <div class="example-label">✕ 잘못된 예시</div>
+            <div class="example-text">{bad_text}</div>
+          </div>
+          <div class="example-card example-good">
+            <div class="example-label">✓ 올바른 예시</div>
+            <div class="example-text">{good_text}</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
